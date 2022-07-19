@@ -24,7 +24,10 @@ const registerSchema = Joi.object({
 const logInSchema = Joi.object({
   email: Joi.string().pattern(emailRegexp).required(),
   password: Joi.string().min(6).required(),
-  token: Joi.string().required(),
+});
+
+const updateSubscriptionSchema = Joi.object({
+  subscription: Joi.string().valid("starter", "pro", "business"),
 });
 
 router.post("/register", async (req, res, next) => {
@@ -44,7 +47,7 @@ router.post("/register", async (req, res, next) => {
       password: hash,
       subscription,
     });
-    res.status(201).json(result.email, result.token, result.subscription);
+    res.status(201).json(result.email);
   } catch (error) {
     next(error);
   }
@@ -63,11 +66,11 @@ router.post("/login", async (req, res, next) => {
       throw createError("invalid email or password ", 401);
     }
     const payload = {
-      id: _id,
+      id: user._id,
     };
     const token = jwt.sign(payload, SECRET_KEY, { expiresIn: "1h" });
     await User.findByIdAndUpdate(user._id, { token });
-    res.status(200).json(email, token);
+    res.status(200).json(token);
   } catch (error) {
     next(error);
   }
@@ -86,6 +89,27 @@ router.get("/logout", authorize, async (req, res, next) => {
 router.get("/current", authorize, async (req, res, next) => {
   const { email, phone, subscription } = req.user;
   res.json({ email, phone, subscription });
+});
+
+router.patch("/subscription", authorize, async (req, res, next) => {
+  try {
+    const { _id } = req.user;
+
+    const { error } = updateSubscriptionSchema.validate(req.body);
+    if (error) {
+      throw createError("missing subscription option", 400);
+    }
+    const result = await User.findByIdAndUpdate(_id, req.body, {
+      new: true,
+    });
+    res.json("subscription updated");
+    if (!result) {
+      throw createError("User not found", 404);
+    }
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
 });
 
 module.exports = router;
