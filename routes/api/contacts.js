@@ -2,7 +2,8 @@ const express = require("express");
 const Joi = require("joi");
 
 const Contact = require("../../models/contacts");
-const { createError } = require("../../helpers/createError");
+const createError = require("../../helpers/createError");
+const authorize = require("../../middleware/authorize");
 
 const router = express.Router();
 
@@ -15,16 +16,20 @@ const favoriteSchema = Joi.object({
   favorite: Joi.boolean().required(),
 });
 
-router.get("/", async (req, res, next) => {
+router.get("/", authorize, async (req, res, next) => {
   try {
-    const result = await Contact.find({}, "-createdAt -updatedAt");
-    res.status(200).json(result);
+    const { _id: owner } = req.user;
+    const result = await Contact.find({ owner }, "-createdAt -updatedAt");
+    res
+      .status(200)
+      .json(result)
+      .populate("owner", "-password, -createdAt -updatedAt");
   } catch (error) {
     next(error);
   }
 });
 
-router.get("/:id", async (req, res, next) => {
+router.get("/:id", authorize, async (req, res, next) => {
   try {
     const result = await Contact.FindById(req.params.id);
     if (!result) {
@@ -35,13 +40,14 @@ router.get("/:id", async (req, res, next) => {
   }
 });
 
-router.post("/", async (req, res, next) => {
+router.post("/", authorize, async (req, res, next) => {
   try {
     const { error } = contactsSchema.validate(req.body);
     if (error) {
       throw createError(error.message, 400);
     }
-    const result = await Contact.create(req.body);
+    const { _id: owner } = req.user;
+    const result = await Contact.create({ ...req.body, owner });
     res.status(201).json(result);
   } catch (error) {
     next(error);
