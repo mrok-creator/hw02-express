@@ -2,10 +2,14 @@ const express = require("express");
 const Joi = require("joi");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const gravatar = require("gravatar");
+const path = require("path");
+const fs = require("fs");
 
 const User = require("../../models/user");
 const createError = require("../../helpers/createError");
 const authorize = require("../../middleware/authorize");
+const upload = require("../../middleware/upload");
 
 const { SECRET_KEY } = process.env;
 
@@ -42,10 +46,12 @@ router.post("/register", async (req, res, next) => {
       throw createError("email in use", 409);
     }
     const hash = await bcrypt.hash(password, 10);
+    const avatarURL = gravatar.url(email);
     const result = await User.create({
       email,
       password: hash,
       subscription,
+      avatarURL,
     });
     res.status(201).json(result.email);
   } catch (error) {
@@ -111,5 +117,32 @@ router.patch("/subscription", authorize, async (req, res, next) => {
     next(error);
   }
 });
+
+const avatarDir = path.join(__dirname, "../../", "public", "avatars");
+
+router.patch(
+  "/avatar",
+  authorize,
+  upload.single("avatar"),
+  async (req, res, next) => {
+    try {
+      const { _id } = req.user;
+      const { path: tempDir, originalname } = req.file;
+
+      const [ext] = originalname.split(".").reverse();
+      const avatarName = `${_id}.${ext}`;
+      const avatarPath = path.join(avatarDir, avatarName);
+
+      await fs.rename(tempDir, avatarPath);
+      const avatarURL = path.join("/avatars", avatarName);
+      await User.findByIdAndUpdate(_id, { avatarURL });
+
+      res.json({ avatarURL });
+    } catch (error) {
+      await fs.unlink(req.file.path);
+      next(error);
+    }
+  }
+);
 
 module.exports = router;
