@@ -5,9 +5,10 @@ const jwt = require("jsonwebtoken");
 const gravatar = require("gravatar");
 const path = require("path");
 const fs = require("fs");
+const bson = require("bson-objectid");
 
 const User = require("../../models/user");
-const createError = require("../../helpers/createError");
+const { createError, sendMail } = require("../../helpers");
 const authorize = require("../../middleware/authorize");
 const upload = require("../../middleware/upload");
 
@@ -30,10 +31,15 @@ const logInSchema = Joi.object({
   password: Joi.string().min(6).required(),
 });
 
+const verificationEmailSchema = Joi.object({
+  email: Joi.string().pattern(emailRegexp).required(),
+});
+
 const updateSubscriptionSchema = Joi.object({
   subscription: Joi.string().valid("starter", "pro", "business"),
 });
 
+// user register route
 router.post("/register", async (req, res, next) => {
   try {
     const { error } = registerSchema.validate(req.body);
@@ -47,18 +53,79 @@ router.post("/register", async (req, res, next) => {
     }
     const hash = await bcrypt.hash(password, 10);
     const avatarURL = gravatar.url(email);
+    const verificationToken = bson();
+
     const result = await User.create({
       email,
       password: hash,
       subscription,
       avatarURL,
+      verificationToken,
     });
+
+    const mail = {
+      to: email,
+      subject: "Verify your account",
+      html: `<a target='_blank' href='https://mondodb-project.herokuapp.com/${verificationToken}'>Click here to verify your account</a>`,
+    };
+    await sendMail(mail);
     res.status(201).json(result.email);
   } catch (error) {
     next(error);
   }
 });
 
+// user verify by email route
+router.get("/verify/:verificationToken", async (req, res, next) => {
+  try {
+    const { verificationToken } = req.params;
+    const user = await User.findOne({ verificationToken });
+    if (!user) {
+      throw createError("User not found", 404);
+    }
+    await User.findByIdAndUpdate(user._id, {
+      verificationToken: "",
+      verify: true,
+    });
+
+    res, status(200).json({ message: "User verified" });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// user resend verification email route
+
+router.post("/verify", async (req, res, next) => {
+  try {
+    const { error } = verificationEmailSchema.validate(req.body);
+    if (error) {
+      throw createError(error.message, 400);
+    }
+
+    const { email } = req.body;
+    const user = await User.findOne({ email });
+    if (!user) {
+      throw createError("User not found", 404);
+    }
+    if (user.verify) {
+      throw createError("User already verified", 400);
+    }
+    const verificationToken = user.verificationToken;
+    const mail = {
+      to: email,
+      subject: "Verify your account",
+      html: `<a target='_blank' href='https://mondodb-project.herokuapp.com/${verificationToken}'>Click here to verify your account</a>`,
+    };
+    await sendMail(mail);
+
+    res.status(200).json({ message: "Verification email sent" });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// user login route
 router.post("/login", async (req, res, next) => {
   try {
     const { error } = logInSchema.validate(req.body);
@@ -71,6 +138,10 @@ router.post("/login", async (req, res, next) => {
     if (!passwordValid || !user) {
       throw createError("invalid email or password ", 401);
     }
+    if (!user.verify) {
+      throw createError("Email not verified", 401);
+    }
+
     const payload = {
       id: user._id,
     };
@@ -82,6 +153,7 @@ router.post("/login", async (req, res, next) => {
   }
 });
 
+// user logout route
 router.get("/logout", authorize, async (req, res, next) => {
   try {
     const { _id } = req.user;
@@ -92,6 +164,7 @@ router.get("/logout", authorize, async (req, res, next) => {
   }
 });
 
+// route user get session info by token
 router.get("/current", authorize, async (req, res, next) => {
   const { email, phone, subscription } = req.user;
   res.json({ email, phone, subscription });
